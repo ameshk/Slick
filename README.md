@@ -1,2 +1,2 @@
 # Slick
-Data Storage and processing framework
+Data Storage framework
