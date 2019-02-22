@@ -4,9 +4,9 @@ import java.util.Date
 import org.apache.hadoop.fs.Path
 import scala.collection.immutable.HashMap
 
-class IndexFileHandeling(configMap: HashMap[String, String], spark: SparkSession, hdfs: FileSystem) {
+class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
 
-  def processFlow(in: IndexEncapsObj, mode: String) {
+  def processFlow(in: IndexEncapsObj, mode: String):Boolean= {
 
     val inputTableName = in.inputTableName
     val delTableName = in.delTableName
@@ -26,9 +26,11 @@ class IndexFileHandeling(configMap: HashMap[String, String], spark: SparkSession
       writeIndexFile("UPDATE_INDEX_TABLE", primaryKeyColumn, timeStampColumn, indexInputFolderLocation, indexOutputFolderLocation)
     } else if (mode.toLowerCase().equals("delete")) {
       createIndexData(delIndexTableName, delTableName, primaryKeyColumn, timeStampColumn)
-      deleteRowsIndexFile("DELETE_INDEX_TABLE", indexTableName, delIndexTableName)
+      deleteRowsIndexFile("DELETE_INDEX_TABLE", indexTableName, delIndexTableName,primaryKeyColumn)
       writeIndexFile("DELETE_INDEX_TABLE", primaryKeyColumn, timeStampColumn, indexInputFolderLocation, indexOutputFolderLocation)
     }
+    
+    true
   }
 
   private def updateInsertRowsIndexFile(tableName: String, indexTableName: String, newIndexTableName: String, primaryKeyColumn: String, timeStampColumn: String): Boolean =
@@ -49,10 +51,12 @@ class IndexFileHandeling(configMap: HashMap[String, String], spark: SparkSession
       true
     }
 
-  private def deleteRowsIndexFile(tableName: String, indexTableName: String, delIndexTableName: String): Boolean =
+  private def deleteRowsIndexFile(tableName: String, indexTableName: String, delIndexTableName: String, primaryKey:String): Boolean =
     {
+      val joinCondition = primaryKey.map(a => "IN."+a+" = DEL."+a).mkString(" AND ")
+      
       val currentIndexFileDataFrame = spark.sql("SELECT * FROM " + indexTableName)
-      val deleteIndexDataFrame = spark.sql("SELECT * FROM " + delIndexTableName)
+      val deleteIndexDataFrame = spark.sql("SELECT * FROM " + indexTableName+" AS IN INNER JOIN "+delIndexTableName+" AS DEL ON "+joinCondition)
 
       val ResIndexFile = currentIndexFileDataFrame.except(deleteIndexDataFrame)
 
