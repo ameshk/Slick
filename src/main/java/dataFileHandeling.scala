@@ -2,6 +2,7 @@ import java.util.Date
 import org.apache.spark.sql.SparkSession
 import org.apache.hadoop.fs.FileSystem
 import java.text.SimpleDateFormat
+import org.apache.spark.sql.functions._
 
 class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception {
 
@@ -17,9 +18,9 @@ class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception
 
     val tempIndexData = spark.sql("SELECT * ,'" + CurrentTimestamp + "' AS " + timeStampColumn + " FROM " + tableName)
 
-    tempIndexData.createOrReplaceTempView("TempIndexTable")
+    tempIndexData.createOrReplaceTempView("TempInputTable")
 
-    val dupPK = spark.sql("SELECT " + primaryKeyColumn + ",COUNT(" + timeStampColumn + ") AS MAX_COUNT FROM TempIndexTable GROUP BY " + primaryKeyColumn).filter("MAX_COUNT > 1").count
+    val dupPK = spark.sql("SELECT " + primaryKeyColumn + ",COUNT(" + timeStampColumn + ") AS MAX_COUNT FROM TempInputTable GROUP BY " + primaryKeyColumn).filter("MAX_COUNT > 1").count
 
     if (dupPK > 0) {
       throw new Exception("Duplicates in Primary Key")
@@ -27,7 +28,7 @@ class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception
 
     val upsertIndexObj = new IndexEncapsObj()
 
-    upsertIndexObj.inputTableName = tableName
+    upsertIndexObj.inputTableName = "TempInputTable"
     upsertIndexObj.delTableName = "NA"
     upsertIndexObj.indexTableName = "CURRENT_INDEX_TABLE"
     upsertIndexObj.newIndexTableName = newIndexTableName
@@ -39,7 +40,7 @@ class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception
     val upsertFlag = processIndexFile(upsertIndexObj, "update")
 
     if (upsertFlag) {
-      writeOutputDataPartitioned("TempIndexTable", opDataFolderLocation)
+      writeOutputDataPartitioned("TempInputTable", opDataFolderLocation)
     } else {
       throw new Exception("Error while doing Upsert")
     }
