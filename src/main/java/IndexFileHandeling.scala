@@ -1,12 +1,17 @@
 import org.apache.spark.sql.SparkSession
 import org.apache.hadoop.fs.FileSystem
 import java.util.Date
+import org.apache.spark.sql.functions._
 import org.apache.hadoop.fs.Path
 import scala.collection.immutable.HashMap
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.types.StructField
 
 class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
 
-  def processFlow(in: IndexEncapsObj, mode: String):Boolean= {
+  def processFlow(in: IndexEncapsObj, mode: String): Boolean = {
 
     val inputTableName = in.inputTableName
     val delTableName = in.delTableName
@@ -18,18 +23,23 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
     val indexInputFolderLocation = in.indexInputFolderLocation
     val indexOutputFolderLocation = indexInputFolderLocation + "_" + new Date().getTime
 
-    createCurrentIndexFile(indexTableName, indexInputFolderLocation)
+    val flag = createCurrentIndexFile(indexTableName, indexInputFolderLocation)
 
+    if(!flag)
+    {
+      createEmptyIndexFile(indexTableName, primaryKeyColumn, timeStampColumn)
+    }
+    
     if (mode.toLowerCase().equals("update")) {
       createIndexData(newIndexTableName, inputTableName, primaryKeyColumn, timeStampColumn)
       updateInsertRowsIndexFile("UPDATE_INDEX_TABLE", indexTableName, newIndexTableName, primaryKeyColumn, timeStampColumn)
       writeIndexFile("UPDATE_INDEX_TABLE", primaryKeyColumn, timeStampColumn, indexInputFolderLocation, indexOutputFolderLocation)
     } else if (mode.toLowerCase().equals("delete")) {
       createIndexData(delIndexTableName, delTableName, primaryKeyColumn, timeStampColumn)
-      deleteRowsIndexFile("DELETE_INDEX_TABLE", indexTableName, delIndexTableName,primaryKeyColumn)
+      deleteRowsIndexFile("DELETE_INDEX_TABLE", indexTableName, delIndexTableName, primaryKeyColumn)
       writeIndexFile("DELETE_INDEX_TABLE", primaryKeyColumn, timeStampColumn, indexInputFolderLocation, indexOutputFolderLocation)
     }
-    
+
     true
   }
 
@@ -47,16 +57,16 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       val ResIndexFile = spark.sql("SELECT " + primaryKeyColumn + ", MAX(" + timeStampColumn + ") AS " + timeStampColumn + " FROM unionIndexTable GROUP BY " + primaryKeyColumn)
 
       ResIndexFile.createOrReplaceTempView(tableName)
-
+      
       true
     }
 
-  private def deleteRowsIndexFile(tableName: String, indexTableName: String, delIndexTableName: String, primaryKey:String): Boolean =
+  private def deleteRowsIndexFile(tableName: String, indexTableName: String, delIndexTableName: String, primaryKey: String): Boolean =
     {
-      val joinCondition = primaryKey.map(a => "IN."+a+" = DEL."+a).mkString(" AND ")
-      
+      val joinCondition = primaryKey.map(a => "IN." + a + " = DEL." + a).mkString(" AND ")
+
       val currentIndexFileDataFrame = spark.sql("SELECT * FROM " + indexTableName)
-      val deleteIndexDataFrame = spark.sql("SELECT * FROM " + indexTableName+" AS IN INNER JOIN "+delIndexTableName+" AS DEL ON "+joinCondition)
+      val deleteIndexDataFrame = spark.sql("SELECT * FROM " + indexTableName + " AS IN INNER JOIN " + delIndexTableName + " AS DEL ON " + joinCondition)
 
       val ResIndexFile = currentIndexFileDataFrame.except(deleteIndexDataFrame)
 
@@ -70,7 +80,17 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       /**
        * This will check if the primary key column is distinct
        */
-      spark.sql("SELECT *,COUNT(" + timeStampColumn + ") AS MAX_COUNT FROM " + tableName + " GROUP BY " + primaryKeyColumn).filter("MAX_COUNT > 1").count() == 0
+      val df = spark.sql("SELECT COUNT(" + timeStampColumn + ") AS MAX_COUNT FROM " + tableName + " GROUP BY " + primaryKeyColumn)
+      
+      val countDF = df.filter("MAX_COUNT > 1").count()
+      
+      var flag = false
+      if(countDF == 0)
+      {
+        flag = true
+      }
+      
+      flag
     }
 
   private def createIndexData(tableName: String, inputTableName: String, primaryKeyColumn: String, timeStampColumn: String): Boolean =
@@ -88,9 +108,39 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       /**
        * This will create indexfile from input location
        */
-      val df = spark.read.parquet(indexInputFolderLocation)
-      df.createOrReplaceTempView(tableName)
-      true
+      var flag = false
+      try {
+        val df = spark.read.parquet(indexInputFolderLocation)
+        df.createOrReplaceTempView(tableName)
+        flag = true
+      } catch {
+        case t: Throwable => {
+          flag = false
+        }
+      }
+
+      flag
+    }
+  
+  private def createEmptyIndexFile(tableName: String, primaryKeyColumn: String, timeStampColumn:String): Boolean =
+    {
+      /**
+       * This will create indexfile from input location
+       */
+      var flag = false
+      try {
+        val col = primaryKeyColumn.split(",").map(a => StructField(a.replaceAll("`", ""),StringType,true)).:+(StructField(timeStampColumn.replaceAll("`", ""),StringType,true))
+        val schema = StructType(col)
+        val df = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema)
+        df.createOrReplaceTempView(tableName)
+        flag = true
+      } catch {
+        case t: Throwable => {
+          flag = false
+        }
+      }
+
+      flag
     }
   private def writeIndexFile(tableName: String, primaryKeyColumn: String, timeStampColumn: String, indexInputFolderLocation: String, indexOutputFolderLocation: String): Boolean =
     {
@@ -102,7 +152,9 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       if (checkIndexData(tableName, primaryKeyColumn, timeStampColumn)) {
         spark.sql("SELECT * FROM " + tableName).write.mode("overwrite").parquet(indexOutputFolderLocation)
 
-        hdfs.delete(new Path(indexInputFolderLocation))
+        if (hdfs.isDirectory(new Path(indexInputFolderLocation))) {
+          hdfs.delete(new Path(indexInputFolderLocation))
+        }
 
         flag = hdfs.rename(new Path(indexOutputFolderLocation), new Path(indexInputFolderLocation))
       }
