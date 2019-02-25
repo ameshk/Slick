@@ -3,8 +3,13 @@ import org.apache.spark.sql.SparkSession
 import org.apache.hadoop.fs.FileSystem
 import java.text.SimpleDateFormat
 import org.apache.spark.sql.functions._
+import org.apache.hadoop.fs.Path
 
 class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception {
+  
+  private val dt = new Date()
+  private val stf = new SimpleDateFormat("yyyyMMdd")
+  private val formatDate = stf.format(dt)
 
   def upsertDataIngest(dn: dataEncapsObj, tableName: String): Boolean = {
     val primaryKeyColumn = dn.primaryKeyColumn
@@ -36,7 +41,9 @@ class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception
     upsertIndexObj.primaryKeyColumn = primaryKeyColumn
     upsertIndexObj.timeStampColumn = timeStampColumn
     upsertIndexObj.indexInputFolderLocation = indexInputFolderLocation
-
+    upsertIndexObj.dateFolder = formatDate
+    upsertIndexObj.partitionDateFolderColumn = "PARTITION_DATE_FOLDER"
+      
     val upsertFlag = processIndexFile(upsertIndexObj, "update")
 
     if (upsertFlag) {
@@ -67,6 +74,8 @@ class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception
       upsertIndexObj.primaryKeyColumn = primaryKeyColumn
       upsertIndexObj.timeStampColumn = timeStampColumn
       upsertIndexObj.indexInputFolderLocation = indexInputFolderLocation
+      upsertIndexObj.dateFolder = formatDate
+      upsertIndexObj.partitionDateFolderColumn = "PARTITION_DATE_FOLDER"
 
       processIndexFile(upsertIndexObj, "delete")
       
@@ -87,11 +96,15 @@ class dataFileHandeling(spark: SparkSession, hdfs: FileSystem) extends Exception
 
   private def writeOutputDataPartitioned(tableName: String, opDataFolderLocation: String): Boolean =
     {
-      val dt = new Date()
-      val stf = new SimpleDateFormat("yyyyMMdd")
-      val formatDate = stf.format(dt)
+      
+      val ResOutputPath = opDataFolderLocation+"/"+formatDate
+      
+      if(!hdfs.isDirectory(new Path(ResOutputPath)))
+      {
+        hdfs.mkdirs(new Path(ResOutputPath))
+      }
 
-      spark.sql("SELECT *,'" + formatDate + "' AS PARTITIONED_DATE FROM " + tableName).write.partitionBy("PARTITIONED_DATE").mode("append").parquet(opDataFolderLocation)
+      spark.sql("SELECT * FROM " + tableName).write.mode("append").parquet(ResOutputPath)
       true
     }
 }
