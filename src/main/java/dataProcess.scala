@@ -3,9 +3,11 @@ import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.sql.functions._
 
 class dataProcess(spark: SparkSession, hdfs: FileSystem) {
+  val warehouseLocation = "file:///C:/Users/a.jayendra.karekar/Desktop/LiveWire/Files/DeltaData"
+    
   def processInputData(tableName: String, primaryKey: String):Boolean= {
-    val indexFolder = "file:///C:/Users/a.jayendra.karekar/Desktop/LiveWire/Files/DeltaData/INDEX/" + tableName
-    val DataFolder = "file:///C:/Users/a.jayendra.karekar/Desktop/LiveWire/Files/DeltaData/DATA/" + tableName
+    val indexFolder = "/INDEX/" + tableName
+    val DataFolder = "/DATA/" + tableName
 
     val dn = new dataEncapsObj()
     dn.primaryKeyColumn = primaryKey.split(",").map(a => "`" + a + "`").mkString(",")
@@ -19,5 +21,18 @@ class dataProcess(spark: SparkSession, hdfs: FileSystem) {
     
     dfh.upsertDataIngest(dn, tableName)
     true
+  }
+  
+  def readData(tableName:String , primaryKey:String, outputTableName:String)
+  {
+    
+    val readObj = new ReadEncapsObj()
+    
+    readObj.primaryKeyColumn = primaryKey.split(",").map(a => "`" + a + "`").mkString(",")
+    readObj.timeStampColumn = "EVENT_TIMESTAMP"
+    
+    val rd = new ReadData(spark, warehouseLocation)
+    
+    rd.readIndexData(tableName, readObj, outputTableName)
   }
 }
