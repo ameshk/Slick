@@ -9,4 +9,6 @@ class IndexEncapsObj {
   var primaryKeyColumn = ""
   var timeStampColumn = ""
   var indexInputFolderLocation = ""
+  var dateFolder =""
+  var partitionDateFolderColumn = ""
 }
