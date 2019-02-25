@@ -22,20 +22,22 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
     val timeStampColumn = in.timeStampColumn
     val indexInputFolderLocation = in.indexInputFolderLocation
     val indexOutputFolderLocation = indexInputFolderLocation + "_" + new Date().getTime
+    val dateFolder = in.dateFolder
+    val dateFolderColumn = in.partitionDateFolderColumn
 
     val flag = createCurrentIndexFile(indexTableName, indexInputFolderLocation)
 
     if(!flag)
     {
-      createEmptyIndexFile(indexTableName, primaryKeyColumn, timeStampColumn)
+      createEmptyIndexFile(indexTableName, primaryKeyColumn, timeStampColumn,dateFolderColumn)
     }
     
     if (mode.toLowerCase().equals("update")) {
-      createIndexData(newIndexTableName, inputTableName, primaryKeyColumn, timeStampColumn)
-      updateInsertRowsIndexFile("UPDATE_INDEX_TABLE", indexTableName, newIndexTableName, primaryKeyColumn, timeStampColumn)
+      createIndexData(newIndexTableName, inputTableName, primaryKeyColumn, timeStampColumn,dateFolderColumn,dateFolder)
+      updateInsertRowsIndexFile("UPDATE_INDEX_TABLE", indexTableName, newIndexTableName, primaryKeyColumn, timeStampColumn,dateFolderColumn)
       writeIndexFile("UPDATE_INDEX_TABLE", primaryKeyColumn, timeStampColumn, indexInputFolderLocation, indexOutputFolderLocation)
     } else if (mode.toLowerCase().equals("delete")) {
-      createIndexData(delIndexTableName, delTableName, primaryKeyColumn, timeStampColumn)
+      createIndexData(delIndexTableName, delTableName, primaryKeyColumn, timeStampColumn,dateFolderColumn,dateFolder)
       deleteRowsIndexFile("DELETE_INDEX_TABLE", indexTableName, delIndexTableName, primaryKeyColumn)
       writeIndexFile("DELETE_INDEX_TABLE", primaryKeyColumn, timeStampColumn, indexInputFolderLocation, indexOutputFolderLocation)
     }
@@ -43,7 +45,7 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
     true
   }
 
-  private def updateInsertRowsIndexFile(tableName: String, indexTableName: String, newIndexTableName: String, primaryKeyColumn: String, timeStampColumn: String): Boolean =
+  private def updateInsertRowsIndexFile(tableName: String, indexTableName: String, newIndexTableName: String, primaryKeyColumn: String, timeStampColumn: String,dateFolderColumn:String): Boolean =
     {
       /**
        * This method will update the index file
@@ -54,7 +56,7 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       val unionDF = currentIndexFileDataFrame.unionAll(newIndexFileDataFrame)
       unionDF.createOrReplaceTempView("unionIndexTable")
 
-      val ResIndexFile = spark.sql("SELECT " + primaryKeyColumn + ", MAX(" + timeStampColumn + ") AS " + timeStampColumn + " FROM unionIndexTable GROUP BY " + primaryKeyColumn)
+      val ResIndexFile = spark.sql("SELECT " + primaryKeyColumn + ", "+timeStampColumn+", "+dateFolderColumn+", DENSE_RANK() OVER (PARTITION BY "+primaryKeyColumn+","+dateFolderColumn+" ORDER BY "+timeStampColumn+" DESC) AS `ROW_DENSE_RANK` FROM unionIndexTable").filter("`ROW_DENSE_RANK` = '1'").drop("ROW_DENSE_RANK")
 
       ResIndexFile.createOrReplaceTempView(tableName)
       
@@ -93,12 +95,12 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       flag
     }
 
-  private def createIndexData(tableName: String, inputTableName: String, primaryKeyColumn: String, timeStampColumn: String): Boolean =
+  private def createIndexData(tableName: String, inputTableName: String, primaryKeyColumn: String, timeStampColumn: String,dateFolderColumn:String, DateFolder:String): Boolean =
     {
       /**
        * This will create indexfile from input data
        */
-      val df = spark.sql("SELECT " + primaryKeyColumn + " , " + timeStampColumn + " FROM " + inputTableName)
+      val df = spark.sql("SELECT " + primaryKeyColumn + " , " + timeStampColumn + ",'"+DateFolder+"' AS `"+dateFolderColumn+"` FROM " + inputTableName)
       df.createOrReplaceTempView(tableName)
       true
     }
@@ -122,14 +124,14 @@ class IndexFileHandeling(spark: SparkSession, hdfs: FileSystem) {
       flag
     }
   
-  private def createEmptyIndexFile(tableName: String, primaryKeyColumn: String, timeStampColumn:String): Boolean =
+  private def createEmptyIndexFile(tableName: String, primaryKeyColumn: String, timeStampColumn:String, dateFolderColumn:String): Boolean =
     {
       /**
        * This will create indexfile from input location
        */
       var flag = false
       try {
-        val col = primaryKeyColumn.split(",").map(a => StructField(a.replaceAll("`", ""),StringType,true)).:+(StructField(timeStampColumn.replaceAll("`", ""),StringType,true))
+        val col = primaryKeyColumn.split(",").map(a => StructField(a.replaceAll("`", ""),StringType,true)).:+(StructField(timeStampColumn.replaceAll("`", ""),StringType,true)).:+(StructField(dateFolderColumn.replaceAll("`", ""),StringType,true))
         val schema = StructType(col)
         val df = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema)
         df.createOrReplaceTempView(tableName)
