@@ -35,4 +35,17 @@ class dataProcess(spark: SparkSession, hdfs: FileSystem) {
     
     rd.readIndexData(tableName, readObj, outputTableName)
   }
+  
+  def majorCompactData(tableName:String , primaryKey:String)
+  {
+    val cmpObj = new CompactionEncapsObj()
+    
+    cmpObj.primaryKeyColumn = primaryKey.split(",").map(a => "`" + a + "`").mkString(",")
+    cmpObj.timeStampColumn = "EVENT_TIMESTAMP"
+    cmpObj.partitionDateFolderColumn = "PARTITION_DATE_FOLDER"
+    
+    val cmp = new Compaction(warehouseLocation,hdfs,spark)
+    
+    cmp.majorCompaction(tableName, cmpObj)
+  }
 }
